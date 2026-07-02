@@ -1,0 +1,274 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{geometry}
+\usepackage{amsmath,amssymb,amsfonts,bm}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\geometry{margin=25mm}
+\hypersetup{colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue}
+
+\title{Problem Formulation and Algorithm Candidates for Contextual-Bandit Ad Filtering in an In-House DSP}
+\author{Matching Algorithm Research Note}
+\date{\today}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\ind}{\mathbf{1}}
+\newcommand{\calA}{\mathcal{A}}
+\newcommand{\calX}{\mathcal{X}}
+\newcommand{\calD}{\mathcal{D}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This note reformulates the post-purchase advertising problem as a contextual-bandit
+ad filtering problem for an in-house demand-side platform (DSP).  The objective is not
+yet to solve real-time bidding end-to-end, but to construct a principled first layer
+that selects a small set of promising ads from a large candidate pool under exploration,
+cold-start, delayed feedback, and auction-induced selection bias.  We define the decision
+process, reward, logging requirements, offline evaluation protocol, and compare multiple
+contextual-bandit algorithms: Disjoint LinUCB, Hybrid LinUCB, Linear Thompson Sampling,
+Logistic/GLM Bandits, and Neural Bandits.  The recommended first implementation is a
+feature-based LinUCB/LinTS baseline with inverse-propensity-aware logging and a clear path
+to hybrid and generalized-linear extensions.
+\end{abstract}
+
+\section{Scope}
+The product surface is a post-purchase page in a car-rental booking service.  A user has
+just completed a reservation, so the system observes contextual variables such as car type,
+area, rental duration, price, device, and possibly session history.  The DSP owns a set of
+ads, each with metadata such as category, target area, target car type, advertiser, budget,
+and cold-start status.  The filtering layer chooses a small set of ads to pass to the
+bidding layer.  The bidding layer then decides bid prices using value prediction, pacing,
+and auction logic.
+
+This document focuses on the filtering layer.  It deliberately separates filtering from
+bidding because RTB contains censored feedback, budget constraints, pacing, and strategic
+auction effects that are not fully captured by a standard contextual bandit.
+
+\section{Decision Problem}
+\subsection{Objects}
+At interaction $t=1,2,\ldots,T$:
+\begin{itemize}[leftmargin=2em]
+  \item $c_t \in \mathcal{C}$ is the observed purchase context: car type, area, area type,
+  rental days, price bucket, device, session-level summaries, and time features.
+  \item $\mathcal{A}_t = \{a_{t1},\ldots,a_{tN_t}\}$ is the eligible ad set after hard
+  business filters such as active campaign, area eligibility, creative approval, and budget availability.
+  \item $z(a) \in \mathcal{Z}$ denotes ad-side features: category, target area, target car
+  type, advertiser, campaign age, novelty flag, and historical priors if available.
+  \item $x_t(a)=\phi(c_t,z(a))\in\R^d$ is a joint context--ad feature vector.
+  \item The filtering policy selects a subset $S_t\subseteq\mathcal{A}_t$ with
+  $|S_t|=K$; the bidding layer receives $S_t$.
+\end{itemize}
+
+\subsection{Reward}
+Let $Y_t(a)$ be the potential outcome for ad $a$ in context $c_t$.  Depending on the
+product goal, the reward can be one of:
+\begin{align}
+  r_t(a) &= \ind\{\text{click}\}, \\
+  r_t(a) &= v_{\mathrm{cv}}\ind\{\text{conversion}\}, \\
+  r_t(a) &= \alpha_{\mathrm{ctr}}\ind\{\text{click}\}
+          + \alpha_{\mathrm{cvr}}v_{\mathrm{cv}}\ind\{\text{conversion}\}
+          - \alpha_{\mathrm{cost}}\,\mathrm{cost}.
+\end{align}
+For the first filtering-layer prototype, click reward is acceptable because it is frequent
+and timely.  For production optimization, the reward should move toward value-per-impression
+or value-per-won-impression after accounting for delayed conversions and auction costs.
+
+The ideal objective for top-$K$ filtering is
+\begin{equation}
+  \max_{\pi}\; \E\left[\sum_{t=1}^{T}\sum_{a\in S_t^\pi} r_t(a)\right],
+  \quad S_t^\pi = \pi(c_t,\mathcal{A}_t),\quad |S_t^\pi|=K.
+\end{equation}
+Equivalently, the regret against an oracle that knows expected rewards is
+\begin{equation}
+  R_T = \sum_{t=1}^{T}
+  \left(
+    \sum_{a\in S_t^\star}\mu(c_t,a)
+    - \sum_{a\in S_t^\pi}\mu(c_t,a)
+  \right),
+\end{equation}
+where $\mu(c,a)=\E[r\mid c,a]$ and $S_t^\star$ is the top-$K$ set by $\mu$.
+
+\subsection{Feature Design}
+A linear first model requires interactions to be explicit.  A minimal feature map is:
+\begin{align}
+  x_t(a)=\big[&\mathrm{onehot}(\mathrm{car\_type}),
+  \mathrm{onehot}(\mathrm{area}),
+  \mathrm{onehot}(\mathrm{area\_type}),
+  \mathrm{price\_bucket},
+  \mathrm{rental\_days\_scaled},\\
+  &\mathrm{onehot}(\mathrm{ad\_category}),
+  \mathrm{is\_new},
+  \ind\{\mathrm{context.area}=\mathrm{ad.target\_area}\},\\
+  &\ind\{\mathrm{area\_type=resort}\}\times
+    \ind\{\mathrm{category}\in\{\mathrm{spot},\mathrm{restaurant}\}\},\\
+  &\ind\{\mathrm{car\_type}=\mathrm{ad.target\_car\_type}\}\times
+    \ind\{\mathrm{category=goods}\},\\
+  &\mathrm{car\_type}\times\mathrm{ad\_category},
+  \mathrm{area}\times\mathrm{ad\_category}
+  \big].
+\end{align}
+The feature map should be versioned.  Every logged decision must store the feature version,
+eligible ad set, chosen set, ranking scores, and action probabilities or propensities.
+
+\section{Feedback and Bias}
+In RTB, feedback is censored.  The system observes clicks or conversions only for ads that
+were selected, bid on, won, and rendered.  Therefore, naive training on won impressions can
+learn the behavior of the auction and pacing system rather than intrinsic ad relevance.
+
+A production-quality log should contain:
+\begin{itemize}[leftmargin=2em]
+  \item request id, context, timestamp, user/session privacy-safe keys;
+  \item all eligible ads before filtering;
+  \item selected top-$K$ set, scores, and propensities;
+  \item bid decision, bid price, pacing multiplier, and shading multiplier;
+  \item win/loss, clearing price when available, impression, click, conversion, and delayed labels;
+  \item model version, feature version, and exploration parameters.
+\end{itemize}
+
+For offline evaluation, use randomized exploration traffic and estimators such as inverse
+propensity scoring (IPS), self-normalized IPS, or doubly robust estimators.  Deterministic
+logs from a greedy policy are insufficient for unbiased evaluation of alternative policies.
+
+\section{Algorithm Candidates}
+\subsection{Disjoint LinUCB}
+Classical disjoint LinUCB maintains independent parameters per arm.  For arm $a$:
+\begin{align}
+  A_a &= \lambda I + \sum_{s:a_s=a} x_s x_s^\top, &
+  b_a &= \sum_{s:a_s=a} r_s x_s, &
+  \hat\theta_a &= A_a^{-1}b_a.
+\end{align}
+The score is
+\begin{equation}
+  p_t(a)=\hat\theta_a^\top x_t(a)+\alpha\sqrt{x_t(a)^\top A_a^{-1}x_t(a)}.
+\end{equation}
+It is easy to implement and interpretable, but pure per-arm learning is weak for new ads
+because a newly introduced arm has no history.
+
+\subsection{Feature-Based Shared LinUCB}
+A practical first step is to represent ads by features and learn one shared model:
+\begin{align}
+  A &= \lambda I + \sum_s x_s x_s^\top, &
+  b &= \sum_s r_s x_s, &
+  \hat\theta &= A^{-1}b,\\
+  p_t(a)&=\hat\theta^\top x_t(a)+\alpha\sqrt{x_t(a)^\top A^{-1}x_t(a)}.
+\end{align}
+This transfers learning across ads through metadata and interactions, so it is better for
+cold start.  It should be the first reliable baseline for this repository.
+
+\subsection{Hybrid LinUCB}
+Hybrid LinUCB decomposes the reward into a global component and an arm-specific component:
+\begin{equation}
+  \E[r_t(a)] \approx z_t(a)^\top\beta + x_t(a)^\top\theta_a.
+\end{equation}
+Here $z_t(a)$ captures common features shared across arms, while $x_t(a)$ captures arm-local
+features.  This is appropriate once there is enough data to justify advertiser- or ad-level
+idiosyncratic effects without losing cold-start generalization.
+
+\subsection{Linear Thompson Sampling}
+Linear Thompson Sampling uses the same Bayesian linear-regression structure but samples a
+parameter vector instead of adding an optimism bonus:
+\begin{align}
+  \hat\theta &= A^{-1}b, &
+  \tilde\theta_t &\sim \mathcal{N}(\hat\theta, v^2 A^{-1}), &
+  p_t(a)&=\tilde\theta_t^\top x_t(a).
+\end{align}
+It often behaves more smoothly than UCB in production ranking systems.  Because it shares
+most linear-algebra machinery with LinUCB, it should be implemented as the main comparison
+baseline.
+
+\subsection{Logistic or GLM Bandits}
+Click and conversion are binary, so a logistic mean function is more natural than a linear
+mean:
+\begin{equation}
+  \Pr(r=1\mid x,a)=\sigma(\theta^\top x), \quad
+  \sigma(u)=\frac{1}{1+e^{-u}}.
+\end{equation}
+GLM bandits are appropriate if linear predictions become poorly calibrated, especially for
+low CTR regimes.  They are more complex because online confidence bounds require curvature
+or approximate posterior updates.
+
+\subsection{Neural Bandits}
+Neural bandits replace the hand-engineered linear feature map with a neural representation
+$f_\omega(c,a)$.  They can capture nonlinear interactions, but they require more data,
+careful uncertainty estimation, and stronger monitoring.  They are not recommended as the
+first production algorithm.
+
+\section{Comparison Matrix}
+\begin{longtable}{p{0.20\linewidth}p{0.24\linewidth}p{0.24\linewidth}p{0.20\linewidth}}
+\toprule
+Method & Strengths & Weaknesses & Recommended role \\
+\midrule
+Disjoint LinUCB & Simple, interpretable, per-ad parameters & Poor cold start; many ads imply many matrices & Educational baseline only \\
+Shared LinUCB & Simple; fast; transfers across ads; easy cold start & Linear assumption; feature engineering required & First implementation \\
+Hybrid LinUCB & Balances global transfer and arm-specific effects & More bookkeeping; more parameters & Second-stage extension \\
+Linear Thompson Sampling & Smooth exploration; shares LinUCB state & Requires sampling and variance calibration & Main A/B comparison with LinUCB \\
+Logistic/GLM Bandit & Better for binary rewards and calibration & More complex online inference & Use after linear baseline diagnostics \\
+Neural Bandit & Nonlinear representation power & Data hungry; uncertainty is hard & Later-stage research track \\
+\bottomrule
+\end{longtable}
+
+\section{Recommended Implementation Plan}
+\begin{enumerate}[leftmargin=2em]
+  \item Define production-grade schemas for contexts, ads, eligible sets, actions, propensities, and outcomes.
+  \item Implement a shared linear model abstraction with Sherman--Morrison updates for $A^{-1}$.
+  \item Implement both LinUCB and Linear Thompson Sampling on the same feature store.
+  \item Add semi-bandit top-$K$ learning: update the model for each displayed ad with observed reward.
+  \item Add randomized logging traffic and propensity recording before claiming offline gains.
+  \item Evaluate with reward@K, CTR@K, cumulative regret in simulation, IPS/SNIPS on logs, and calibration plots.
+  \item Introduce Hybrid LinUCB only after the shared model has stable logs and enough per-ad observations.
+  \item Keep the bidding layer separate: expected value from the filtering layer should become one input to bid price,
+  together with pacing, budget, and bid shading.
+\end{enumerate}
+
+\section{References}
+\begin{thebibliography}{9}
+\bibitem{li2010linucb}
+L. Li, W. Chu, J. Langford, and R. E. Schapire.
+\newblock A Contextual-Bandit Approach to Personalized News Article Recommendation.
+\newblock WWW, 2010.
+
+\bibitem{chu2011linear}
+W. Chu, L. Li, L. Reyzin, and R. E. Schapire.
+\newblock Contextual Bandits with Linear Payoff Functions.
+\newblock AISTATS, 2011.
+
+\bibitem{agrawal2013ts}
+S. Agrawal and N. Goyal.
+\newblock Thompson Sampling for Contextual Bandits with Linear Payoffs.
+\newblock ICML, 2013.
+
+\bibitem{li2011offline}
+L. Li, W. Chu, J. Langford, and X. Wang.
+\newblock Unbiased Offline Evaluation of Contextual-Bandit-based News Article Recommendation Algorithms.
+\newblock WSDM, 2011.
+
+\bibitem{wang2017rtb}
+J. Wang, W. Zhang, and S. Yuan.
+\newblock Display Advertising with Real-Time Bidding (RTB) and Behavioural Targeting.
+\newblock Foundations and Trends in Information Retrieval, 2017.
+
+\bibitem{zhang2014optimal}
+W. Zhang, S. Yuan, and J. Wang.
+\newblock Optimal Real-Time Bidding for Display Advertising.
+\newblock KDD, 2014.
+
+\bibitem{xu2015pacing}
+J. Xu, K.-c. Lee, W. Li, Q. Qi, and Q. Lu.
+\newblock Smart Pacing for Effective Online Ad Campaign Optimization.
+\newblock KDD, 2015.
+
+\bibitem{zhang2016censored}
+W. Zhang, T. Zhou, J. Wang, and J. Xu.
+\newblock Bid-aware Gradient Descent for Unbiased Learning with Censored Data in Display Advertising.
+\newblock KDD, 2016.
+\end{thebibliography}
+
+\end{document}

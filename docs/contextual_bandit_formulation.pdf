@@ -1,0 +1,864 @@
+%PDF-1.4
+%
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+2 0 obj
+<< /Length 2478 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 790 Td
+() Tj
+T*
+(Problem Formulation and Algorithm Candidates for Contextual-Bandit Ad Filtering in an In-) Tj
+T*
+(House DSP) Tj
+T*
+(========================================================================) Tj
+T*
+() Tj
+T*
+(Matching Algorithm Research Note) Tj
+T*
+() Tj
+T*
+(2026-07-02) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(ABSTRACT) Tj
+T*
+() Tj
+T*
+(This note reformulates the post-purchase advertising problem as a contextual-bandit) Tj
+T*
+(ad filtering problem for an in-house demand-side platform \(DSP\). The objective is not) Tj
+T*
+(yet to solve real-time bidding end-to-end, but to construct a principled first layer) Tj
+T*
+(that selects a small set of promising ads from a large candidate pool under exploration,) Tj
+T*
+(cold-start, delayed feedback, and auction-induced selection bias. We define the decision) Tj
+T*
+(process, reward, logging requirements, offline evaluation protocol, and compare multiple) Tj
+T*
+(contextual-bandit algorithms: Disjoint LinUCB, Hybrid LinUCB, Linear Thompson Sampling,) Tj
+T*
+(Logistic/GLM Bandits, and Neural Bandits. The recommended first implementation is a) Tj
+T*
+(feature-based LinUCB/LinTS baseline with inverse-propensity-aware logging and a clear path) Tj
+T*
+(to hybrid and generalized-linear extensions.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Scope) Tj
+T*
+(------------------------------------------------------------) Tj
+T*
+() Tj
+T*
+(The product surface is a post-purchase page in a car-rental booking service. A user has) Tj
+T*
+(just completed a reservation, so the system observes contextual variables such as car type,) Tj
+T*
+(area, rental duration, price, device, and possibly session history. The DSP owns a set of) Tj
+T*
+(ads, each with metadata such as category, target area, target car type, advertiser, budget,) Tj
+T*
+(and cold-start status. The filtering layer chooses a small set of ads to pass to the) Tj
+T*
+(bidding layer. The bidding layer then decides bid prices using value prediction, pacing,) Tj
+T*
+(and auction logic.) Tj
+T*
+() Tj
+T*
+(This document focuses on the filtering layer. It deliberately separates filtering from) Tj
+T*
+(bidding because RTB contains censored feedback, budget constraints, pacing, and strategic) Tj
+T*
+(auction effects that are not fully captured by a standard contextual bandit.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Decision Problem) Tj
+T*
+(------------------------------------------------------------) Tj
+T*
+() Tj
+ET
+endstream
+endobj
+3 0 obj
+<< /Length 1791 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 790 Td
+() Tj
+T*
+() Tj
+T*
+(Objects) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(At interaction t=1,2,,T:) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(* c_t C is the observed purchase context: car type, area, area type,) Tj
+T*
+(rental days, price bucket, device, session-level summaries, and time features.) Tj
+T*
+(* A_t = a_t1,,a_tN_t is the eligible ad set after hard) Tj
+T*
+(business filters such as active campaign, area eligibility, creative approval, and budget) Tj
+T*
+(availability.) Tj
+T*
+(* z\(a\) Z denotes ad-side features: category, target area, target car) Tj
+T*
+(type, advertiser, campaign age, novelty flag, and historical priors if available.) Tj
+T*
+(* x_t\(a\)=\(c_t,z\(a\)\)^d is a joint context--ad feature vector.) Tj
+T*
+(* The filtering policy selects a subset S_tA_t with) Tj
+T*
+(|S_t|=K; the bidding layer receives S_t.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Reward) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Let Y_t\(a\) be the potential outcome for ad a in context c_t. Depending on the) Tj
+T*
+(product goal, the reward can be one of:) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(r_t\(a\) | = click,) Tj
+T*
+(r_t\(a\) | = v_cvconversion,) Tj
+T*
+(r_t\(a\) | = _ctrclick) Tj
+T*
+(+ _cvrv_cvconversion) Tj
+T*
+(- _cost,cost.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(For the first filtering-layer prototype, click reward is acceptable because it is frequent) Tj
+T*
+(and timely. For production optimization, the reward should move toward value-per-impression) Tj
+T*
+(or value-per-won-impression after accounting for delayed conversions and auction costs.) Tj
+T*
+() Tj
+T*
+(The ideal objective for top-K filtering is) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(_; ,) Tj
+T*
+(S_t^ = \(c_t,A_t\), |S_t^|=K.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Equivalently, the regret against an oracle that knows expected rewards is) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(R_T = _t=1^T) Tj
+ET
+endstream
+endobj
+4 0 obj
+<< /Length 1968 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 790 Td
+(\() Tj
+T*
+(_a S_t^\(c_t,a\)) Tj
+T*
+(- _a S_t^\(c_t,a\)) Tj
+T*
+(\),) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(where \(c,a\)= and S_t^ is the top-K set by .) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Feature Design) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(A linear first model requires interactions to be explicit. A minimal feature map is:) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(x_t\(a\)=.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(The feature map should be versioned. Every logged decision must store the feature version,) Tj
+T*
+(eligible ad set, chosen set, ranking scores, and action probabilities or propensities.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Feedback and Bias) Tj
+T*
+(------------------------------------------------------------) Tj
+T*
+() Tj
+T*
+(In RTB, feedback is censored. The system observes clicks or conversions only for ads that) Tj
+T*
+(were selected, bid on, won, and rendered. Therefore, naive training on won impressions can) Tj
+T*
+(learn the behavior of the auction and pacing system rather than intrinsic ad relevance.) Tj
+T*
+() Tj
+T*
+(A production-quality log should contain:) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(* request id, context, timestamp, user/session privacy-safe keys;) Tj
+T*
+(* all eligible ads before filtering;) Tj
+T*
+(* selected top-K set, scores, and propensities;) Tj
+T*
+(* bid decision, bid price, pacing multiplier, and shading multiplier;) Tj
+T*
+(* win/loss, clearing price when available, impression, click, conversion, and delayed) Tj
+T*
+(labels;) Tj
+T*
+(* model version, feature version, and exploration parameters.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(For offline evaluation, use randomized exploration traffic and estimators such as inverse) Tj
+T*
+(propensity scoring \(IPS\), self-normalized IPS, or doubly robust estimators. Deterministic) Tj
+T*
+(logs from a greedy policy are insufficient for unbiased evaluation of alternative policies.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Algorithm Candidates) Tj
+T*
+(------------------------------------------------------------) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Length 1447 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 790 Td
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Disjoint LinUCB) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Classical disjoint LinUCB maintains independent parameters per arm. For arm a:) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(A_a | = I + _s:a_s=a x_s x_s^, |) Tj
+T*
+(b_a | = _s:a_s=a r_s x_s, |) Tj
+T*
+(_a | = A_a^-1b_a.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(The score is) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(p_t\(a\)=_a^ x_t\(a\)+x_t\(a\)^ A_a^-1x_t\(a\).) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(It is easy to implement and interpretable, but pure per-arm learning is weak for new ads) Tj
+T*
+(because a newly introduced arm has no history.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Feature-Based Shared LinUCB) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(A practical first step is to represent ads by features and learn one shared model:) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(A | = I + _s x_s x_s^, |) Tj
+T*
+(b | = _s r_s x_s, |) Tj
+T*
+(| = A^-1b,) Tj
+T*
+(p_t\(a\) | =^ x_t\(a\)+x_t\(a\)^ A^-1x_t\(a\).) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(This transfers learning across ads through metadata and interactions, so it is better for) Tj
+T*
+(cold start. It should be the first reliable baseline for this repository.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Hybrid LinUCB) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Hybrid LinUCB decomposes the reward into a global component and an arm-specific component:) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(z_t\(a\)^ + x_t\(a\)^_a.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Here z_t\(a\) captures common features shared across arms, while x_t\(a\) captures arm-local) Tj
+ET
+endstream
+endobj
+6 0 obj
+<< /Length 1801 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 790 Td
+(features. This is appropriate once there is enough data to justify advertiser- or ad-level) Tj
+T*
+(idiosyncratic effects without losing cold-start generalization.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Linear Thompson Sampling) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Linear Thompson Sampling uses the same Bayesian linear-regression structure but samples a) Tj
+T*
+(parameter vector instead of adding an optimism bonus:) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(| = A^-1b, |) Tj
+T*
+(_t | N\(, v^2 A^-1\), |) Tj
+T*
+(p_t\(a\) | =_t^ x_t\(a\).) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(It often behaves more smoothly than UCB in production ranking systems. Because it shares) Tj
+T*
+(most linear-algebra machinery with LinUCB, it should be implemented as the main comparison) Tj
+T*
+(baseline.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Logistic or GLM Bandits) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Click and conversion are binary, so a logistic mean function is more natural than a linear) Tj
+T*
+(mean:) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(\(r=1 x,a\)=\(^ x\),) Tj
+T*
+(\(u\)=11+e^-u.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(GLM bandits are appropriate if linear predictions become poorly calibrated, especially for) Tj
+T*
+(low CTR regimes. They are more complex because online confidence bounds require curvature) Tj
+T*
+(or approximate posterior updates.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Neural Bandits) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Neural bandits replace the hand-engineered linear feature map with a neural representation) Tj
+T*
+(f_\(c,a\). They can capture nonlinear interactions, but they require more data,) Tj
+T*
+(careful uncertainty estimation, and stronger monitoring. They are not recommended as the) Tj
+T*
+(first production algorithm.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Comparison Matrix) Tj
+T*
+(------------------------------------------------------------) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Length 2324 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 790 Td
+() Tj
+T*
+() Tj
+T*
+(p0.20p0.24p0.24p0.20) Tj
+T*
+() Tj
+T*
+(Method | Strengths | Weaknesses | Recommended role) Tj
+T*
+() Tj
+T*
+(Disjoint LinUCB | Simple, interpretable, per-ad parameters | Poor cold start; many ads imply) Tj
+T*
+(many matrices | Educational baseline only) Tj
+T*
+(Shared LinUCB | Simple; fast; transfers across ads; easy cold start | Linear assumption;) Tj
+T*
+(feature engineering required | First implementation) Tj
+T*
+(Hybrid LinUCB | Balances global transfer and arm-specific effects | More bookkeeping; more) Tj
+T*
+(parameters | Second-stage extension) Tj
+T*
+(Linear Thompson Sampling | Smooth exploration; shares LinUCB state | Requires sampling and) Tj
+T*
+(variance calibration | Main A/B comparison with LinUCB) Tj
+T*
+(Logistic/GLM Bandit | Better for binary rewards and calibration | More complex online) Tj
+T*
+(inference | Use after linear baseline diagnostics) Tj
+T*
+(Neural Bandit | Nonlinear representation power | Data hungry; uncertainty is hard | Later-) Tj
+T*
+(stage research track) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Recommended Implementation Plan) Tj
+T*
+(------------------------------------------------------------) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(* Define production-grade schemas for contexts, ads, eligible sets, actions, propensities,) Tj
+T*
+(and outcomes.) Tj
+T*
+(* Implement a shared linear model abstraction with Sherman--Morrison updates for A^-1.) Tj
+T*
+(* Implement both LinUCB and Linear Thompson Sampling on the same feature store.) Tj
+T*
+(* Add semi-bandit top-K learning: update the model for each displayed ad with observed) Tj
+T*
+(reward.) Tj
+T*
+(* Add randomized logging traffic and propensity recording before claiming offline gains.) Tj
+T*
+(* Evaluate with reward@K, CTR@K, cumulative regret in simulation, IPS/SNIPS on logs, and) Tj
+T*
+(calibration plots.) Tj
+T*
+(* Introduce Hybrid LinUCB only after the shared model has stable logs and enough per-ad) Tj
+T*
+(observations.) Tj
+T*
+(* Keep the bidding layer separate: expected value from the filtering layer should become one) Tj
+T*
+(input to bid price,) Tj
+T*
+(together with pacing, budget, and bid shading.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(References) Tj
+T*
+(------------------------------------------------------------) Tj
+T*
+() Tj
+T*
+() Tj
+ET
+endstream
+endobj
+8 0 obj
+<< /Length 1485 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 790 Td
+(9) Tj
+T*
+() Tj
+T*
+(*) Tj
+T*
+(L. Li, W. Chu, J. Langford, and R. E. Schapire.) Tj
+T*
+(A Contextual-Bandit Approach to Personalized News Article Recommendation.) Tj
+T*
+(WWW, 2010.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(*) Tj
+T*
+(W. Chu, L. Li, L. Reyzin, and R. E. Schapire.) Tj
+T*
+(Contextual Bandits with Linear Payoff Functions.) Tj
+T*
+(AISTATS, 2011.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(*) Tj
+T*
+(S. Agrawal and N. Goyal.) Tj
+T*
+(Thompson Sampling for Contextual Bandits with Linear Payoffs.) Tj
+T*
+(ICML, 2013.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(*) Tj
+T*
+(L. Li, W. Chu, J. Langford, and X. Wang.) Tj
+T*
+(Unbiased Offline Evaluation of Contextual-Bandit-based News Article Recommendation) Tj
+T*
+(Algorithms.) Tj
+T*
+(WSDM, 2011.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(*) Tj
+T*
+(J. Wang, W. Zhang, and S. Yuan.) Tj
+T*
+(Display Advertising with Real-Time Bidding \(RTB\) and Behavioural Targeting.) Tj
+T*
+(Foundations and Trends in Information Retrieval, 2017.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(*) Tj
+T*
+(W. Zhang, S. Yuan, and J. Wang.) Tj
+T*
+(Optimal Real-Time Bidding for Display Advertising.) Tj
+T*
+(KDD, 2014.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(*) Tj
+T*
+(J. Xu, K.-c. Lee, W. Li, Q. Qi, and Q. Lu.) Tj
+T*
+(Smart Pacing for Effective Online Ad Campaign Optimization.) Tj
+T*
+(KDD, 2015.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(*) Tj
+T*
+(W. Zhang, T. Zhou, J. Wang, and J. Xu.) Tj
+T*
+(Bid-aware Gradient Descent for Unbiased Learning with Censored Data in Display Advertising.) Tj
+T*
+(KDD, 2016.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+() Tj
+ET
+endstream
+endobj
+9 0 obj
+<< /Length 37 >>
+stream
+BT
+/F1 10 Tf
+14 TL
+50 790 Td
+() Tj
+ET
+endstream
+endobj
+10 0 obj
+<< /Type /Page /Parent 18 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 2 0 R >>
+endobj
+11 0 obj
+<< /Type /Page /Parent 18 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 3 0 R >>
+endobj
+12 0 obj
+<< /Type /Page /Parent 18 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 4 0 R >>
+endobj
+13 0 obj
+<< /Type /Page /Parent 18 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 5 0 R >>
+endobj
+14 0 obj
+<< /Type /Page /Parent 18 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 6 0 R >>
+endobj
+15 0 obj
+<< /Type /Page /Parent 18 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 7 0 R >>
+endobj
+16 0 obj
+<< /Type /Page /Parent 18 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 8 0 R >>
+endobj
+17 0 obj
+<< /Type /Page /Parent 18 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R >> >> /Contents 9 0 R >>
+endobj
+18 0 obj
+<< /Type /Pages /Kids [10 0 R 11 0 R 12 0 R 13 0 R 14 0 R 15 0 R 16 0 R 17 0 R] /Count 8 >>
+endobj
+19 0 obj
+<< /Type /Catalog /Pages 18 0 R >>
+endobj
+xref
+0 20
+0000000000 65535 f 
+0000000015 00000 n 
+0000000085 00000 n 
+0000002615 00000 n 
+0000004458 00000 n 
+0000006478 00000 n 
+0000007977 00000 n 
+0000009830 00000 n 
+0000012206 00000 n 
+0000013743 00000 n 
+0000013830 00000 n 
+0000013958 00000 n 
+0000014086 00000 n 
+0000014214 00000 n 
+0000014342 00000 n 
+0000014470 00000 n 
+0000014598 00000 n 
+0000014726 00000 n 
+0000014854 00000 n 
+0000014962 00000 n 
+trailer
+<< /Size 20 /Root 19 0 R >>
+startxref
+15013
+%%EOF
