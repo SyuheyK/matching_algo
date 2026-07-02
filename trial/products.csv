@@ -1,0 +1,16 @@
+product_id,car_type,area,seats,base_price_per_day,area_type
+prod_001,SUV,chiba,5,9000,urban
+prod_002,SUV,funabashi,5,9000,urban
+prod_003,SUV,kashiwa,5,9000,urban
+prod_004,SUV,narita,5,9000,resort
+prod_005,SUV,katsuura,5,9000,resort
+prod_006,minivan,chiba,8,11000,urban
+prod_007,minivan,funabashi,8,11000,urban
+prod_008,minivan,kashiwa,8,11000,urban
+prod_009,minivan,narita,8,11000,resort
+prod_010,minivan,katsuura,8,11000,resort
+prod_011,hatchback,chiba,5,6000,urban
+prod_012,hatchback,funabashi,5,6000,urban
+prod_013,hatchback,kashiwa,5,6000,urban
+prod_014,hatchback,narita,5,6000,resort
+prod_015,hatchback,katsuura,5,6000,resort
